@@ -6,8 +6,20 @@ import (
     "os"
     "path/filepath"
     "strings"
-    "github.com/bnagy/gapstone"
+    "github.com/knightsc/gapstone"
 )
+
+const (
+    SLICING_STATUS_NONE = iota
+    SLICING_STATUS_WAIT_CMP
+    SLICING_STATUS_SLICING
+)
+
+type BranchSlice struct {
+    branchInsn gapstone.Instruction
+    cmpInsn gapstone.Instruction
+    slices []gapstone.Instruction
+}
 
 func main() {
     logger.Setup(logger.TRACE, false)
@@ -57,36 +69,55 @@ func main() {
         gapstone.CS_ARCH_X86,
         gapstone.CS_MODE_32,
     )
-
-    textSh := target.GetSectionBinByName(".text")
-    engine, err := gapstone.New(
-        gapstone.CS_ARCH_X86,
-        gapstone.CS_MODE_64,
-    )
     if err != nil {
-        panic("analize binary failed")
+        panic("failed to create engine")
     }
+
+    logger.DLog("Disasm: %s\n", targetPath)
+    textSh := targetObj.GetSectionBinByName(".text")
     insns, err := engine.Disasm(textSh, 0x00, 0)
     if err != nil {
         panic("Disasm failed")
     }
-    for _, insn := range insns {
-        if isBranchInsn(insn.Mnemonic) {
-            fmt.Println(insn.Mnemonic)
-        }
+    // reverse insns
+    length := len(insns)
+    for i := 0; i < length / 2; i++ {
+        insns[i], insns[length - i - 1] = insns[length - i - 1], insns[i]
     }
 
-    
-    if err == nil {
-        log.Printf("Disasm:\n")
-        for _, insn := range insns {
-            log.Printf("0x%x:\t%s\t\t%s\n", insn.Address, insn.Mnemonic, insn.OpStr)
+    branchSlice := new(BranchSlice)
+    slicingStatus := SLICING_STATUS_NONE
+    for _, insn := range insns {
+        logger.DLog("0x%x:\t%s\t\t%s\n", insn.Address, insn.Mnemonic, insn.OpStr)
+        switch slicingStatus {
+        case SLICING_STATUS_NONE:
+            if isBranch(insn.Mnemonic) {
+                logger.DLog("Branch: %s\n", insn.Mnemonic)
+                branchSlice.branchInsn = insn
+                slicingStatus = SLICING_STATUS_WAIT_CMP
+            }
+        case SLICING_STATUS_WAIT_CMP:
+            if isFlagEffectiveInsn(insn.Mnemonic) {
+                logger.DLog("Flag Effective: %s\n", insn.Mnemonic)
+                slicingStatus = SLICING_STATUS_SLICING
+                branchSlice.cmpInsn = insn
+            }
+        case SLICING_STATUS_SLICING:
+            // 
         }
-        return
-    }	os.Exit(0)
+    }
+    os.Exit(0)
 }
 
-func isBranchInsn(mnemonic string) bool {
+func isFlagEffectiveInsn(mnemonic string) bool {
+    nm := strings.ToUpper(mnemonic)
+    if nm == "CMP" {
+        return true
+    }
+    return false
+}
+
+func isBranch(mnemonic string) bool {
     // not implemented
     // JO,JNO
     // JS,JNS
@@ -100,9 +131,6 @@ func isBranchInsn(mnemonic string) bool {
     // JMP,JE,JZ,JNE,JNZ,JL,JNGE,JGE,JNL,JLE,JNG,JG,JNLE
     nm := strings.ToUpper(mnemonic)
     if nm == "CALL" {
-        return true
-    }
-    if nm == "JMP" {
         return true
     }
     if nm == "JE" {
@@ -143,25 +171,3 @@ func isBranchInsn(mnemonic string) bool {
     }
     return false
 }
-
-/*
-func analizeBinary(target elf.ElfObject) {
-    textSh := target.GetSectionBinByName(".text")
-    engine, err := gapstone.New(
-        gapstone.CS_ARCH_X86,
-        gapstone.CS_MODE_64,
-    )
-    if err != nil {
-        panic("analize binary failed")
-    }
-    insns, err := engine.Disasm(textSh, 0x00, 0)
-    if err != nil {
-        panic("Disasm failed")
-    }
-    for _, insn := range insns {
-        if isBranchInsn(insn.Mnemonic) {
-            fmt.Println(insn.Mnemonic)
-        }
-    }
-}
-*/
